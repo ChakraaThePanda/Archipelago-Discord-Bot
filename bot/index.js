@@ -13,6 +13,7 @@ const {
   ButtonStyle,
   PermissionFlagsBits,
   ActivityType,
+  MessageFlags,
 } = require("discord.js");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 const fs = require("fs");
@@ -97,7 +98,7 @@ function progressBar(done, total) {
 
 async function buildStatusEmbeds(trackerId, guild) {
   const data = await ctGet(`/tracker/${trackerId}`);
-  const { games, title } = data;
+  const { games, title, room_host, last_port } = data;
 
   // Fetch all members for @mention resolution (requires GuildMembers intent + Members privilege)
   let members;
@@ -142,45 +143,61 @@ async function buildStatusEmbeds(trackerId, guild) {
   let totalDone = 0, totalAll = 0;
   for (const g of games) { totalDone += g.checks_done; totalAll += g.checks_total; }
 
-  const lines = [];
+  // Build one block per owner group — these are never split across embeds
+  const blocks = [];
   for (const [, { label, games: ownerGames }] of groups) {
-    lines.push(`- **${label}**`);
+    const blockLines = [`- **${label}**`];
     for (const g of ownerGames) {
       const comp = COMPLETION_EMOJI[g.completion_status] ?? "";
       const prog = PROGRESSION_EMOJI[g.progression_status] ?? "❓";
       const pct  = g.checks_total ? Math.round((g.checks_done / g.checks_total) * 100) : 0;
-      lines.push(
+      blockLines.push(
         `  - ${prog}${comp} \`${g.name}\` — **${g.game}** — ${g.checks_done}/${g.checks_total} (${pct}%)`
       );
     }
+    blocks.push(blockLines.join("\n"));
   }
-
-  // Split into ≤4000-char chunks across multiple embeds if needed
-  const chunks = [];
-  let chunk = "";
-  for (const line of lines) {
-    if (chunk.length + line.length + 1 > 4000) {
-      chunks.push(chunk.trimEnd());
-      chunk = "";
-    }
-    chunk += line + "\n";
-  }
-  if (chunk.trim()) chunks.push(chunk.trimEnd());
 
   const trackerUrl = `https://cheesetrackers.theincrediblewheelofchee.se/tracker/${trackerId}`;
+  const serverLine = (room_host && last_port) ? `\`\`\`\n${room_host}:${last_port}\n\`\`\`\n` : "";
+
+  // Pack blocks into ≤4000-char chunks; first chunk reserves space for serverLine header
+  const LIMIT = 4000;
+  const chunks = [];
+  let chunk = "";
+  for (const block of blocks) {
+    const budget = chunks.length === 0 ? LIMIT - serverLine.length : LIMIT;
+    const sep = chunk ? "\n" : "";
+    if (chunk && chunk.length + sep.length + block.length > budget) {
+      chunks.push(chunk);
+      chunk = block;
+    } else {
+      chunk = chunk ? chunk + sep + block : block;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+
+  const totalPages  = chunks.length;
+  const footerTotal = `Total: ${progressBar(totalDone, totalAll)}`;
 
   return chunks.map((desc, i) => {
-    const e = new EmbedBuilder()
-      .setColor(0xf5c542)
-      .setDescription(desc);
+    const e = new EmbedBuilder().setColor(0xf5c542);
 
     if (i === 0) {
       e.setTitle(title || "Tracker Status")
-       .setURL(trackerUrl);
+       .setURL(trackerUrl)
+       .setDescription(serverLine + desc);
+    } else {
+      e.setDescription(desc);
     }
+
     if (i === chunks.length - 1) {
-      e.setFooter({ text: `Total: ${progressBar(totalDone, totalAll)}` });
+      const footer = totalPages > 1 ? `${footerTotal} — Page ${i + 1}/${totalPages}` : footerTotal;
+      e.setFooter({ text: footer });
+    } else {
+      e.setFooter({ text: `Page ${i + 1}/${totalPages}` });
     }
+
     return e;
   });
 }
@@ -217,10 +234,10 @@ async function handleLink(interaction) {
   try {
     trackerId = parseTrackerId(input);
   } catch (err) {
-    return interaction.reply({ content: `❌ Invalid URL: ${err.message}`, ephemeral: true });
+    return interaction.reply({ content: `❌ Invalid URL: ${err.message}`, flags: MessageFlags.Ephemeral });
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     await ctGet(`/tracker/${trackerId}`);
   } catch (err) {
@@ -246,11 +263,11 @@ async function handleStatus(interaction) {
   if (!link) {
     return interaction.reply({
       content: "❌ This channel isn't linked to a CheeseTrackers room. Use `/link` first.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   let embeds;
   try {
@@ -282,7 +299,7 @@ async function handlePostButton(interaction) {
   try {
     embeds = await buildStatusEmbeds(trackerId, interaction.guild);
   } catch (err) {
-    return interaction.followUp({ content: `❌ ${err.message}`, ephemeral: true });
+    return interaction.followUp({ content: `❌ ${err.message}`, flags: MessageFlags.Ephemeral });
   }
 
   await interaction.channel.send({ embeds });
@@ -304,7 +321,7 @@ async function handleHelp(interaction) {
       { name: "GitHub",        value: "[github.com/ChakraaThePanda/Archeesepelago-Discord-Bot](https://github.com/ChakraaThePanda/Archeesepelago-Discord-Bot)" },
     );
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -316,7 +333,7 @@ const client = new Client({
   ],
 });
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   const rest = new REST().setToken(DISCORD_TOKEN);
   console.log("Registering slash commands…");
@@ -344,7 +361,7 @@ client.on("interactionCreate", async interaction => {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply({ content: msg, embeds: [], components: [] });
       } else {
-        await interaction.reply({ content: msg, ephemeral: true });
+        await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
       }
     } catch { /* ignore follow-up errors */ }
   }
