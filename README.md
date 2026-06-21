@@ -41,14 +41,14 @@ Open `bot/archeesepelago.conf`, fill in the two values, then double-click `bot/r
 Slots are sorted alphabetically and grouped by owner. Owners appear as Discord `@mentions` if their CT username matches a server member.
 
 ```
-🏁🚀 `SlotName` — Game Name — 42/80 (53%) — Go Mode
+🚀🏁 `SlotName` — Game Name — 42/80 (53%)
 ```
 
 | Completion | | Progression | |
 |---|---|---|---|
-| 🔴 Incomplete | ✅ All checks | 🟢 Unblocked | 🔒 BK |
-| 🎯 Goal | 🏁 Done | 🚀 Go Mode | 🟡 Soft BK |
-| 🎉 Released | | ❓ Unknown | |
+| ✅ All checks | 🎯 Goal | 🟢 Unblocked | 🔴 BK |
+| 🏁 Done | 💀 Released | 🚀 Go Mode | 🟡 Soft BK |
+| | | ❓ Unknown | |
 
 ---
 

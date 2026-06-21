@@ -139,8 +139,8 @@ async function buildStatusEmbeds(trackerId, guild) {
     groups.get(ownerKey).games.push(game);
   }
 
-  const totalDone = games.reduce((s, g) => s + g.checks_done,  0);
-  const totalAll  = games.reduce((s, g) => s + g.checks_total, 0);
+  let totalDone = 0, totalAll = 0;
+  for (const g of games) { totalDone += g.checks_done; totalAll += g.checks_total; }
 
   const lines = [];
   for (const [, { label, games: ownerGames }] of groups) {
