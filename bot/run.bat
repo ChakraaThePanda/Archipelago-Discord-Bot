@@ -1,6 +1,6 @@
 @echo off
 title Archipelago Discord Bot
-cd /d "%~dp0"
+pushd "%~dp0"
 
 echo.
 echo  ============================================
@@ -11,6 +11,16 @@ echo.
 :: ── Node.js check ────────────────────────────────────────────────────────────
 where node >nul 2>&1
 if %errorlevel% neq 0 (
+    :: Node not in PATH — check known install locations first (handles post-install PATH lag)
+    if exist "%ProgramFiles%\nodejs\node.exe" (
+        set "PATH=%ProgramFiles%\nodejs;%PATH%"
+        goto node_ok
+    )
+    if exist "%ProgramFiles(x86)%\nodejs\node.exe" (
+        set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
+        goto node_ok
+    )
+
     echo  [!] Node.js not found. Installing...
     echo.
 
@@ -18,12 +28,12 @@ if %errorlevel% neq 0 (
     set "WINGET=%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe"
     if exist "%WINGET%" (
         "%WINGET%" install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
-        if %errorlevel% equ 0 (
+        if exist "%ProgramFiles%\nodejs\node.exe" (
+            set "PATH=%ProgramFiles%\nodejs;%PATH%"
             echo.
-            echo  Node.js installed. Restarting...
+            echo  Node.js installed successfully.
             echo.
-            start "" "%~f0"
-            exit
+            goto node_ok
         )
         echo.
         echo  [!] winget install failed, trying PowerShell download...
@@ -31,22 +41,33 @@ if %errorlevel% neq 0 (
     )
 
     :: Fallback: download and install LTS via PowerShell
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $v=((Invoke-WebRequest 'https://nodejs.org/dist/index.json' -UseBasicParsing).Content ^| ConvertFrom-Json ^| Where-Object{$_.lts -ne $false})[0].version; $d=$env:TEMP+'\node_setup.msi'; Write-Host ('  Downloading Node.js '+$v+'...'); (New-Object Net.WebClient).DownloadFile('https://nodejs.org/dist/'+$v+'/node-'+$v+'-x64.msi',$d); Write-Host '  Installing (a UAC prompt may appear)...'; Start-Process msiexec -ArgumentList @('/i',$d,'/quiet','/norestart') -Wait -Verb RunAs"
-    if %errorlevel% neq 0 (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $v=((Invoke-WebRequest 'https://nodejs.org/dist/index.json' -UseBasicParsing).Content | ConvertFrom-Json | Where-Object{$_.lts -ne $false})[0].version; $d=$env:TEMP+'\node_setup.msi'; Write-Host ('  Downloading Node.js '+$v+'...'); (New-Object Net.WebClient).DownloadFile('https://nodejs.org/dist/'+$v+'/node-'+$v+'-x64.msi',$d); Write-Host '  Installing (a UAC prompt may appear)...'; Start-Process msiexec -ArgumentList @('/i',$d,'/quiet','/norestart') -Wait -Verb RunAs"
+
+    if exist "%ProgramFiles%\nodejs\node.exe" (
+        set "PATH=%ProgramFiles%\nodejs;%PATH%"
         echo.
-        echo  [!] Automatic install failed.
-        echo      Please install Node.js manually from https://nodejs.org/
-        echo      Then run this file again.
+        echo  Node.js installed successfully.
         echo.
-        pause
-        exit /b 1
+        goto node_ok
     )
+    if exist "%ProgramFiles(x86)%\nodejs\node.exe" (
+        set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
+        echo.
+        echo  Node.js installed successfully.
+        echo.
+        goto node_ok
+    )
+
     echo.
-    echo  Node.js installed. Restarting...
+    echo  [!] Automatic install failed.
+    echo      Please install Node.js manually from https://nodejs.org/
+    echo      Then run this file again.
     echo.
-    start "" "%~f0"
-    exit
+    pause
+    exit /b 1
 )
+
+:node_ok
 
 :: ── Config check ──────────────────────────────────────────────────────────────
 if not exist "archipelago.conf" (
@@ -78,14 +99,34 @@ if %errorlevel% equ 0 (
 if not exist "node_modules" (
     echo  Installing dependencies ^(first run only^)...
     echo.
-    npm install
+    npm install --no-audit
+    if not exist "node_modules\discord.js" (
+        echo.
+        echo  [!] npm install failed. See errors above.
+        echo.
+        pause
+        exit /b 1
+    )
     echo.
+    echo  Dependencies installed. Restarting to launch bot...
+    echo.
+    start "" "%~f0"
+    exit
 )
 
 :: ── Start ─────────────────────────────────────────────────────────────────────
-echo  Starting bot...
+echo  Starting bot... ^(Ctrl+C to stop^)
 echo.
 node index.js
+set "NODE_EXIT=%errorlevel%"
 echo.
-echo  Bot has stopped. Check above for any errors.
+echo  ============================================
+if %NODE_EXIT% neq 0 (
+    echo  [!] Bot stopped with error code %NODE_EXIT%.
+    echo      Check the output above for details.
+) else (
+    echo  Bot stopped cleanly.
+)
+echo  ============================================
+echo.
 pause

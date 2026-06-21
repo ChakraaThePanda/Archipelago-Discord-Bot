@@ -326,4 +326,12 @@ client.on("interactionCreate", async interaction => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-client.login(DISCORD_TOKEN).catch(console.error);
+if (!DISCORD_TOKEN) {
+  console.error("[!] DISCORD_TOKEN is not set in archipelago.conf");
+  process.exit(1);
+}
+
+client.login(DISCORD_TOKEN).catch(err => {
+  console.error("[!] Failed to log in to Discord:", err.message);
+  process.exit(1);
+});
