@@ -1,5 +1,5 @@
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "archipelago.conf") });
+require("dotenv").config({ path: path.join(__dirname, "archeesepelago.conf") });
 
 const {
   Client,
@@ -12,6 +12,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   PermissionFlagsBits,
+  ActivityType,
 } = require("discord.js");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 const fs = require("fs");
@@ -53,36 +54,38 @@ async function ctGet(endpoint) {
   return res.json();
 }
 
+const CT_HOST = "cheesetrackers.theincrediblewheelofchee.se";
+
 function parseTrackerId(input) {
-  // e.g. https://cheesetrackers.theincrediblewheelofchee.se/tracker/yWfxZTSWRNKp40zbNhuMTw
-  const match = input.match(/\/tracker\/([A-Za-z0-9_-]+)/);
-  return match ? match[1] : input.trim();
+  const trimmed = input.trim();
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname !== CT_HOST) throw new Error(`URL must be from ${CT_HOST}`);
+    const match = url.pathname.match(/\/tracker\/([A-Za-z0-9_-]+)/);
+    if (!match) throw new Error("No tracker ID found in that URL");
+    return match[1];
+  } catch (err) {
+    // Not a URL — treat as a bare tracker ID unless the error was ours
+    if (err.message.startsWith("URL must be") || err.message.startsWith("No tracker")) throw err;
+    return trimmed;
+  }
 }
 
 // ─── Status Builder ───────────────────────────────────────────────────────────
 
 const COMPLETION_EMOJI = {
-  Incomplete: "🔴",
-  AllChecks:  "✅",
-  Goal:       "🎯",
-  Done:       "🏁",
-  Released:   "🎉",
+  all_checks: "✅",
+  goal:       "🎯",
+  done:       "🏁",
+  released:   "💀",
 };
 
 const PROGRESSION_EMOJI = {
-  Unknown:   "❓",
-  Unblocked: "🟢",
-  Bk:        "🔒",
-  Go:        "🚀",
-  SoftBk:    "🟡",
-};
-
-const PROGRESSION_LABEL = {
-  Unknown:   "Unknown",
-  Unblocked: "Unblocked",
-  Bk:        "BK",
-  Go:        "Go Mode",
-  SoftBk:    "Soft BK",
+  unknown:   "❓",
+  unblocked: "🟢",
+  bk:        "🔴",
+  go:        "🚀",
+  soft_bk:   "🟡",
 };
 
 function progressBar(done, total) {
@@ -120,7 +123,7 @@ async function buildStatusEmbeds(trackerId, guild) {
   const sorted = [...games].sort((a, b) => a.name.localeCompare(b.name));
 
   for (const game of sorted) {
-    const ctUser  = game.claimed_by_discord_username ?? null;
+    const ctUser  = game.effective_discord_username ?? null;
     const ownerKey = ctUser ? ctUser.toLowerCase() : "__unclaimed__";
 
     if (!groups.has(ownerKey)) {
@@ -141,19 +144,15 @@ async function buildStatusEmbeds(trackerId, guild) {
 
   const lines = [];
   for (const [, { label, games: ownerGames }] of groups) {
-    lines.push(`**${label}**`);
+    lines.push(`- **${label}**`);
     for (const g of ownerGames) {
-      const comp   = COMPLETION_EMOJI[g.completion_status]  ?? "❓";
-      const prog   = PROGRESSION_EMOJI[g.progression_status] ?? "❓";
-      const pLabel = PROGRESSION_LABEL[g.progression_status] ?? "Unknown";
-      const pct    = g.checks_total
-        ? Math.round((g.checks_done / g.checks_total) * 100)
-        : 0;
+      const comp = COMPLETION_EMOJI[g.completion_status] ?? "";
+      const prog = PROGRESSION_EMOJI[g.progression_status] ?? "❓";
+      const pct  = g.checks_total ? Math.round((g.checks_done / g.checks_total) * 100) : 0;
       lines.push(
-        `${comp}${prog} \`${g.name}\` — **${g.game}** — ${g.checks_done}/${g.checks_total} (${pct}%) — *${pLabel}*`
+        `  - ${prog}${comp} \`${g.name}\` — **${g.game}** — ${g.checks_done}/${g.checks_total} (${pct}%)`
       );
     }
-    lines.push("");
   }
 
   // Split into ≤4000-char chunks across multiple embeds if needed
@@ -176,7 +175,7 @@ async function buildStatusEmbeds(trackerId, guild) {
       .setDescription(desc);
 
     if (i === 0) {
-      e.setTitle(`🧀 ${title || "Tracker Status"}`)
+      e.setTitle(title || "Tracker Status")
        .setURL(trackerUrl);
     }
     if (i === chunks.length - 1) {
@@ -191,15 +190,10 @@ async function buildStatusEmbeds(trackerId, guild) {
 const commands = [
   new SlashCommandBuilder()
     .setName("link")
-    .setDescription("Link this channel to a CheeseTrackers room")
-    .addChannelOption(opt =>
-      opt.setName("channel")
-        .setDescription("The channel (or forum post) to link")
-        .setRequired(true)
-    )
+    .setDescription("[Permissions Needed] Link this channel to a CheeseTrackers room")
     .addStringOption(opt =>
-      opt.setName("tracker_url")
-        .setDescription("CheeseTrackers page URL or tracker ID")
+      opt.setName("url")
+        .setDescription("CheeseTrackers URL or tracker ID")
         .setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
@@ -207,14 +201,24 @@ const commands = [
   new SlashCommandBuilder()
     .setName("status")
     .setDescription("Show tracker status for this linked channel"),
+
+  new SlashCommandBuilder()
+    .setName("help")
+    .setDescription("Show information and documentation for this bot"),
 ];
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 async function handleLink(interaction) {
-  const channel   = interaction.options.getChannel("channel");
-  const input     = interaction.options.getString("tracker_url");
-  const trackerId = parseTrackerId(input);
+  const channel = interaction.channel;
+  const input   = interaction.options.getString("url");
+
+  let trackerId;
+  try {
+    trackerId = parseTrackerId(input);
+  } catch (err) {
+    return interaction.reply({ content: `❌ Invalid URL: ${err.message}`, ephemeral: true });
+  }
 
   await interaction.deferReply({ ephemeral: true });
   try {
@@ -223,12 +227,15 @@ async function handleLink(interaction) {
     return interaction.editReply(`❌ Could not reach that tracker: ${err.message}`);
   }
 
-  const links = loadLinks();
-  links[linkKey(interaction.guildId, channel.id)] = { trackerId };
+  const links    = loadLinks();
+  const key      = linkKey(interaction.guildId, channel.id);
+  const isUpdate = Boolean(links[key]);
+  links[key]     = { trackerId };
   saveLinks(links);
 
+  const verb = isUpdate ? "updated to" : "linked to";
   await interaction.editReply(
-    `✅ **${channel.name}** is now linked to tracker \`${trackerId}\`.\nRun \`/status\` inside that channel to see progress.`
+    `✅ **#${channel.name}** is now ${verb} tracker \`${trackerId}\`.\nRun \`/status\` here to see progress.`
   );
 }
 
@@ -261,7 +268,6 @@ async function handleStatus(interaction) {
   );
 
   await interaction.editReply({
-    content: "**Preview** — looks good? Post it to the channel:",
     embeds,
     components: [row],
   });
@@ -283,6 +289,24 @@ async function handlePostButton(interaction) {
   await interaction.editReply({ content: "✅ Posted!", embeds: [], components: [] });
 }
 
+async function handleHelp(interaction) {
+  const embed = new EmbedBuilder()
+    .setColor(0xf5c542)
+    .setTitle("Archeesepelago Discord Bot")
+    .setURL("https://github.com/ChakraaThePanda/Archeesepelago-Discord-Bot")
+    .setDescription(
+      "Posts Archipelago multiworld room status from CheeseTrackers into Discord."
+    )
+    .addFields(
+      { name: "`/link <url>`", value: "Link this channel to a CheeseTrackers room. Requires **Manage Channels** permission." },
+      { name: "`/status`",     value: "Show a tracker status preview with a **Post to channel** button." },
+      { name: "`/help`",       value: "Show this message." },
+      { name: "GitHub",        value: "[github.com/ChakraaThePanda/Archeesepelago-Discord-Bot](https://github.com/ChakraaThePanda/Archeesepelago-Discord-Bot)" },
+    );
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -300,6 +324,7 @@ client.once("ready", async () => {
     body: commands.map(c => c.toJSON()),
   });
   console.log("✅ Commands registered globally.");
+  client.user.setActivity("/help to get started", { type: ActivityType.Listening });
 });
 
 client.on("interactionCreate", async interaction => {
@@ -307,6 +332,7 @@ client.on("interactionCreate", async interaction => {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "link")   return await handleLink(interaction);
       if (interaction.commandName === "status") return await handleStatus(interaction);
+      if (interaction.commandName === "help")   return await handleHelp(interaction);
     }
     if (interaction.isButton()) {
       if (interaction.customId.startsWith("post:")) return await handlePostButton(interaction);
@@ -327,7 +353,7 @@ client.on("interactionCreate", async interaction => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 if (!DISCORD_TOKEN) {
-  console.error("[!] DISCORD_TOKEN is not set in archipelago.conf");
+  console.error("[!] DISCORD_TOKEN is not set in archeesepelago.conf");
   process.exit(1);
 }
 

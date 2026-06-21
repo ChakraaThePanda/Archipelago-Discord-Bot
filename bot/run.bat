@@ -1,10 +1,10 @@
 @echo off
-title Archipelago Discord Bot
+title Archeesepelago Discord Bot
 pushd "%~dp0"
 
 echo.
 echo  ============================================
-echo   Archipelago Discord Bot
+echo   Archeesepelago Discord Bot
 echo  ============================================
 echo.
 
@@ -70,8 +70,8 @@ if %errorlevel% neq 0 (
 :node_ok
 
 :: ── Config check ──────────────────────────────────────────────────────────────
-if not exist "archipelago.conf" (
-    echo  [!] archipelago.conf not found.
+if not exist "archeesepelago.conf" (
+    echo  [!] archeesepelago.conf not found.
     echo.
     echo      It should be in the same folder as this file.
     echo.
@@ -80,9 +80,9 @@ if not exist "archipelago.conf" (
 )
 
 :check_config
-findstr /C:"FILL_ME_IN" archipelago.conf >nul 2>&1
+findstr /C:"FILL_ME_IN" archeesepelago.conf >nul 2>&1
 if %errorlevel% equ 0 (
-    echo  [!] archipelago.conf is not configured yet.
+    echo  [!] archeesepelago.conf is not configured yet.
     echo.
     echo      Opening it for you now. Fill in the two values, save the file,
     echo      then press any key here to continue.
@@ -90,7 +90,7 @@ if %errorlevel% equ 0 (
     echo        CT_API_KEY     - from your CheeseTrackers profile page
     echo        DISCORD_TOKEN  - from discord.com/developers ^> your app ^> Bot
     echo.
-    start notepad archipelago.conf
+    start notepad archeesepelago.conf
     pause
     goto check_config
 )
