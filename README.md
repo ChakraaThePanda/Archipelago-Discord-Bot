@@ -12,14 +12,13 @@ Download and install from [nodejs.org](https://nodejs.org/) if you don't have it
 ### 2. Create a Discord bot
 1. Go to [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application**
 2. Under **Bot**: click **Reset Token** and copy your token. Enable **Server Members Intent** under Privileged Gateway Intents.
-3. Under **General Information**: copy your **Application ID**
-4. Under **OAuth2**: generate an invite URL with the `bot` and `applications.commands` scopes and the **View Channels** + **Send Messages** + **Embed Links** permissions, then invite the bot to your server
+3. Under **OAuth2**: generate an invite URL with the `bot` and `applications.commands` scopes and the **View Channels** + **Send Messages** + **Embed Links** permissions, then invite the bot to your server
 
 ### 3. Get your CheeseTrackers API key
 Log in at CheeseTrackers → click your profile → copy your API key.
 
 ### 4. Configure and run
-Open `bot/archipelago.conf`, fill in the three values, then double-click `bot/run.bat`.
+Open `bot/archipelago.conf`, fill in the two values, then double-click `bot/run.bat`.
 
 The bat will open the config file for you automatically if it isn't filled in yet, and will install dependencies on its own on the first run.
 

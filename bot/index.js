@@ -20,7 +20,6 @@ const fs = require("fs");
 
 const CT_API_KEY    = process.env.CT_API_KEY;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID     = process.env.DISCORD_CLIENT_ID;
 const BASE_URL      = "https://cheesetrackers.theincrediblewheelofchee.se/api";
 const LINKS_FILE    = path.join(__dirname, "links.json");
 
@@ -293,8 +292,14 @@ const client = new Client({
   ],
 });
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  const rest = new REST().setToken(DISCORD_TOKEN);
+  console.log("Registering slash commands…");
+  await rest.put(Routes.applicationCommands(client.application.id), {
+    body: commands.map(c => c.toJSON()),
+  });
+  console.log("✅ Commands registered globally.");
 });
 
 client.on("interactionCreate", async interaction => {
@@ -319,17 +324,6 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-// ─── Register & Start ─────────────────────────────────────────────────────────
+// ─── Start ────────────────────────────────────────────────────────────────────
 
-async function registerCommands() {
-  const rest = new REST().setToken(DISCORD_TOKEN);
-  console.log("Registering slash commands…");
-  await rest.put(Routes.applicationCommands(CLIENT_ID), {
-    body: commands.map(c => c.toJSON()),
-  });
-  console.log("✅ Commands registered globally.");
-}
-
-registerCommands()
-  .then(() => client.login(DISCORD_TOKEN))
-  .catch(console.error);
+client.login(DISCORD_TOKEN).catch(console.error);
