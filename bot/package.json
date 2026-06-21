@@ -1,0 +1,17 @@
+{
+  "name": "cheesetracker-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for CheeseTrackers Archipelago room status",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "node-fetch": "^3.3.2"
+  }
+}
