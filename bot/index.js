@@ -72,8 +72,6 @@ function parseTrackerId(input) {
   }
 }
 
-// ─── Status Builder ───────────────────────────────────────────────────────────
-
 const COMPLETION_EMOJI = {
   all_checks: "✅",
   goal:       "🎯",
@@ -96,8 +94,82 @@ function progressBar(done, total) {
   return `${"█".repeat(filled)}${"░".repeat(8 - filled)} ${done}/${total} (${pct}%)`;
 }
 
-async function buildStatusEmbeds(trackerId, guild) {
-  const data = await ctGet(`/tracker/${trackerId}`);
+// ─── Auto-refresh ─────────────────────────────────────────────────────────────
+
+const REFRESH_INTERVAL_MS   = 5 * 60 * 1000;
+const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
+
+// Map<channelId, { message, trackerId, guild, lastHash, lastActivityAt, intervalId }>
+const activeRefreshes = new Map();
+
+function hashTrackerData(data) {
+  const relevant = [...data.games]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(g => ({
+      name:                      g.name,
+      checks_done:               g.checks_done,
+      checks_total:              g.checks_total,
+      completion_status:         g.completion_status,
+      progression_status:        g.progression_status,
+      effective_discord_username: g.effective_discord_username ?? null,
+    }));
+  return JSON.stringify({ games: relevant, last_port: data.last_port ?? null });
+}
+
+function stopAutoRefresh(channelId) {
+  const session = activeRefreshes.get(channelId);
+  if (!session) return;
+  clearInterval(session.intervalId);
+  activeRefreshes.delete(channelId);
+}
+
+function startAutoRefresh(message, trackerId, guild, initialHash) {
+  const channelId = message.channelId;
+  stopAutoRefresh(channelId);
+
+  const session = {
+    message,
+    trackerId,
+    guild,
+    lastHash:        initialHash,
+    lastActivityAt:  Date.now(),
+    intervalId:      null,
+  };
+
+  session.intervalId = setInterval(async () => {
+    try {
+      const data    = await ctGet(`/tracker/${trackerId}`);
+      const newHash = hashTrackerData(data);
+      const now     = Date.now();
+      const changed = newHash !== session.lastHash;
+
+      if (changed) {
+        session.lastHash       = newHash;
+        session.lastActivityAt = now;
+      }
+
+      if (now - session.lastActivityAt > INACTIVITY_TIMEOUT_MS) {
+        stopAutoRefresh(channelId);
+        const embeds = await buildStatusEmbeds(trackerId, data, guild, "stopped");
+        await session.message.edit({ embeds });
+        return;
+      }
+
+      if (changed) {
+        const embeds = await buildStatusEmbeds(trackerId, data, guild, "active");
+        await session.message.edit({ embeds });
+      }
+    } catch (err) {
+      console.error("[auto-refresh]", err);
+      // Unknown Message or Unknown Channel — message/channel is gone
+      if (err.code === 10008 || err.code === 10003) stopAutoRefresh(channelId);
+    }
+  }, REFRESH_INTERVAL_MS);
+
+  activeRefreshes.set(channelId, session);
+}
+
+async function buildStatusEmbeds(trackerId, data, guild, refreshStatus = null) {
   const { games, title, room_host, last_port } = data;
 
   // Fetch all members for @mention resolution (requires GuildMembers intent + Members privilege)
@@ -179,6 +251,12 @@ async function buildStatusEmbeds(trackerId, guild) {
 
   const totalPages  = chunks.length;
   const footerTotal = `Total: ${progressBar(totalDone, totalAll)}`;
+  const nowStr      = new Date().toString().replace(/GMT[+-]\d{4} \((.+?)\)/, (_, tz) =>
+    tz.includes(' ') ? tz.split(' ').map(w => w[0]).join('') : tz
+  );
+  const refreshLine = refreshStatus === "active"  ? `⟳ Updates every 5 min — Last Updated: ${nowStr}`
+                    : refreshStatus === "stopped" ? `⏹ Stopped refreshing (1h inactivity) — Last Updated: ${nowStr}`
+                    : null;
 
   return chunks.map((desc, i) => {
     const e = new EmbedBuilder().setColor(0xf5c542);
@@ -192,10 +270,11 @@ async function buildStatusEmbeds(trackerId, guild) {
     }
 
     if (i === chunks.length - 1) {
-      const footer = totalPages > 1 ? `${footerTotal} — Page ${i + 1}/${totalPages}` : footerTotal;
-      e.setFooter({ text: footer });
+      const bottom = totalPages > 1 ? `${footerTotal} — Page ${i + 1}/${totalPages}` : footerTotal;
+      e.setFooter({ text: refreshLine ? `${refreshLine}\n${bottom}` : bottom });
     } else {
-      e.setFooter({ text: `Page ${i + 1}/${totalPages}` });
+      const bottom = `Page ${i + 1}/${totalPages}`;
+      e.setFooter({ text: refreshLine ? `${refreshLine}\n${bottom}` : bottom });
     }
 
     return e;
@@ -271,7 +350,8 @@ async function handleStatus(interaction) {
 
   let embeds;
   try {
-    embeds = await buildStatusEmbeds(link.trackerId, interaction.guild);
+    const data = await ctGet(`/tracker/${link.trackerId}`);
+    embeds = await buildStatusEmbeds(link.trackerId, data, interaction.guild);
   } catch (err) {
     return interaction.editReply(`❌ Failed to fetch tracker data: ${err.message}`);
   }
@@ -295,14 +375,17 @@ async function handlePostButton(interaction) {
 
   await interaction.deferUpdate();
 
-  let embeds;
+  let data, embeds;
   try {
-    embeds = await buildStatusEmbeds(trackerId, interaction.guild);
+    data   = await ctGet(`/tracker/${trackerId}`);
+    embeds = await buildStatusEmbeds(trackerId, data, interaction.guild, "active");
   } catch (err) {
     return interaction.followUp({ content: `❌ ${err.message}`, flags: MessageFlags.Ephemeral });
   }
 
-  await interaction.channel.send({ embeds });
+  const message = await interaction.channel.send({ embeds });
+  startAutoRefresh(message, trackerId, interaction.guild, hashTrackerData(data));
+
   await interaction.editReply({ content: "✅ Posted!", embeds: [], components: [] });
 }
 
